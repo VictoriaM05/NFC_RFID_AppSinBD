@@ -1,0 +1,77 @@
+#include <SPI.h>              
+#include <Adafruit_PN532.h>  
+
+// Definición de pines SPI
+#define PN532_SCK   14   
+#define PN532_MISO  12   
+#define PN532_MOSI  13   
+#define PN532_SS    5    
+
+// Crear objeto PN532 usando Software SPI 
+Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
+
+void setup() {
+  Serial.begin(115200); 
+  Serial.println("Iniciando lector NFC...");
+
+  // Inicializar el módulo PN532
+  nfc.begin();
+
+  // Verifica si el módulo está conectado leyendo su firmware
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (!versiondata) {
+    Serial.println("No se encontró PN532. Revisa las conexiones.");
+    while (1);  // Detiene el programa si no detecta el módulo
+  }
+
+  Serial.println("PN532 detectado correctamente");
+
+  // Muestra la versión del firmware del PN532 en hexadecimal
+  Serial.print("Firmware version: "); 
+  Serial.println((versiondata >> 24) & 0xFF, HEX);
+
+  nfc.SAMConfig();
+  
+  Serial.println("Listo para leer tarjetas. Acerca una...");
+}
+
+void loop() {
+  uint8_t success;    // Indica si se detectó una tarjeta
+  uint8_t uid[7];     // Arreglo para almacenar el UID (máximo 7 bytes)
+  uint8_t uidLength;  // Longitud del UID
+
+  // Intenta leer una tarjeta NFC con un tiempo de espera de 300 ms
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 300);
+
+  // Si se detecta una tarjeta
+  if (success) {
+    Serial.println("\n=== Tarjeta encontrada ===");
+
+    // ---------- MOSTRAR UID EN HEXADECIMAL (BASE 16) ----------
+    Serial.print("HEXADECIMAL: ");
+    for (uint8_t i = 0; i < uidLength; i++) {
+      if (uid[i] < 0x10) Serial.print("0"); 
+      Serial.print(uid[i], HEX);           // Convierte cada byte a base 16
+      Serial.print(" ");
+    }
+    Serial.println();
+
+    // ---------- MOSTRAR UID EN DECIMAL (BASE 10) ----------
+    Serial.print("DECIMAL: ");
+    for (uint8_t i = 0; i < uidLength; i++) {
+      Serial.print(uid[i], DEC); // Convierte cada byte a base 10
+      Serial.print(" ");
+    }
+    Serial.println();
+
+    // ---------- MOSTRAR UID EN BINARIO (BASE 2) ----------
+    Serial.print("BINARIO: ");
+    for (uint8_t i = 0; i < uidLength; i++) {
+      Serial.print(uid[i], BIN); // Convierte cada byte a base 2
+      Serial.print(" ");
+    }
+    Serial.println();
+
+    delay(1500); 
+  }
+}
