@@ -1,0 +1,176 @@
+import serial
+import serial.tools.list_ports
+import time
+import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
+import threading
+
+# CLASE PRINCIPAL
+class NFC_Registrador:
+
+    def __init__(self):
+        # Crear ventana principal
+        self.root = tk.Tk()
+        self.root.title("Monitor NFC - PN532 + ESP32")
+        self.root.geometry("800x600")
+        
+        # Variables de control
+        self.ser = None              # Puerto serial
+        self.leyendo = False         # Estado de lectura
+        
+
+        # Variables de interfaz
+        self.puerto_var = tk.StringVar()
+        self.baud_var = tk.StringVar(value="115200")
+        
+        # Crear interfaz y cargar puertos
+        self.crear_interfaz()
+        self.cargar_puertos()
+    
+    # INTERFAZ GRÁFICA
+    def crear_interfaz(self):
+        # Frame de configuración
+        config_frame = ttk.LabelFrame(self.root, text="Configuración del Puerto", padding=10)
+        config_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(config_frame, text="Puerto COM:").grid(row=0, column=0, sticky="w")
+        self.puerto_combo = ttk.Combobox(config_frame, textvariable=self.puerto_var, width=15)
+        self.puerto_combo.grid(row=0, column=1, padx=5)
+        
+        ttk.Button(config_frame, text="Actualizar Puertos", command=self.cargar_puertos).grid(row=0, column=2, padx=5)
+        
+        ttk.Label(config_frame, text="Baudrate:").grid(row=1, column=0, sticky="w")
+        ttk.Entry(config_frame, textvariable=self.baud_var, width=15).grid(row=1, column=1, padx=5)
+        
+        # Botón conectar/desconectar
+        btn_frame = ttk.Frame(self.root)
+        btn_frame.pack(pady=5)
+        
+        self.btn_conectar = ttk.Button(btn_frame, text="Conectar al ESP32", command=self.toggle_conexion)
+        self.btn_conectar.pack(side="left", padx=5)
+        
+        # Área de log (donde se ven los datos)
+        log_frame = ttk.LabelFrame(self.root, text="Monitor Serial y Tarjetas Detectadas", padding=10)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.log_text = tk.Text(log_frame, height=20, state="disabled")
+        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Estado de conexión
+        self.status_label = ttk.Label(self.root, text="Desconectado", foreground="red")
+        self.status_label.pack(pady=5)
+    
+    # DETECTAR PUERTOS DISPONIBLES
+    def cargar_puertos(self):
+        puertos = [p.device for p in serial.tools.list_ports.comports()]
+        self.puerto_combo['values'] = puertos
+        if puertos:
+            self.puerto_var.set(puertos[0])
+    
+    # MOSTRAR MENSAJES EN PANTALLA
+    def log(self, mensaje):
+        self.log_text.config(state="normal")
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert("end", f"[{timestamp}] {mensaje}\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+    
+    # CONECTAR / DESCONECTAR
+    def toggle_conexion(self):
+        if self.leyendo:
+            self.desconectar()
+        else:
+            self.conectar()
+    
+
+    def conectar(self):
+        try:
+            puerto = self.puerto_var.get()
+            baud = int(self.baud_var.get())
+            
+            # Abrir conexión serial
+            self.ser = serial.Serial(puerto, baud, timeout=1)
+            time.sleep(2)
+            
+            self.leyendo = True
+            self.btn_conectar.config(text="Desconectar")
+            self.status_label.config(text="Conectado - Escaneando tarjetas...", foreground="green")
+            self.log(" Conectado al ESP32. Acerca una tarjeta...")
+            
+            # Hilo para leer datos sin congelar la app
+            threading.Thread(target=self.leer_serial, daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo conectar:\n{str(e)}")
+    
+
+    def desconectar(self):
+        self.leyendo = False
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+        self.btn_conectar.config(text="Conectar al ESP32")
+        self.status_label.config(text="Desconectado", foreground="red")
+        self.log("Desconectado")
+    
+    # LECTURA DEL SERIAL
+    def leer_serial(self):
+        while self.leyendo and self.ser.is_open:
+            try:
+                if self.ser.in_waiting:
+                    linea = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                    
+                    if linea:
+                        self.log(linea)               
+                        # Detecta cuando se acerca una tarjeta
+                        if "Tarjeta encontrada" in linea:
+                            time.sleep(0.1)
+                            
+                            uid_hex = ""
+                            uid_dec = ""
+                            uid_bin = ""
+                            
+                            # Leer las siguientes líneas (HEX, DECIMAL, BINARIO)
+                            for _ in range(10):
+                                if not self.ser.in_waiting:
+                                    time.sleep(0.05)
+                                    continue
+                                
+                                next_line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                                self.log(next_line)
+                                
+                                if "HEX" in next_line.upper():
+                                    uid_hex = next_line.split(":")[-1].strip()
+                                elif "DECIMAL" in next_line:
+                                    uid_dec = next_line.split(":")[-1].strip()
+                                elif "BINARIO" in next_line:
+                                    uid_bin = next_line.split(":")[-1].strip()
+                                    break
+                            
+                            # Mostrar resumen en pantalla (SIN GUARDAR)
+                            if uid_hex:
+                                self.log(f"UID Detectado: {uid_hex}")
+            
+            except:
+                break
+            
+            time.sleep(0.01)
+    
+    # EJECUTAR APP
+    def run(self):
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.mainloop()
+    
+
+    def on_closing(self):
+        if self.leyendo:
+            self.desconectar()
+        self.root.destroy()
+
+# INICIO DEL PROGRAMA
+if __name__ == "__main__":
+    app = NFC_Registrador()
+    app.run()
